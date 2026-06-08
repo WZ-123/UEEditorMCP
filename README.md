@@ -6,211 +6,385 @@
 
 ---
 
-一个面向 AI 辅助开发的 MCP 插件，用于 Unreal Engine 5.5+ 蓝图操作。  
-对外暴露 **7 个固定 MCP 工具**，由后端 **动作注册表（Action Registry）** 驱动，支持 141 个动作，提供持久 TCP 连接、多客户端支持与自动保存。
+一个面向 **AI 辅助 Unreal Editor 开发** 的 MCP 插件。  
+核心目标不是暴露越来越多零散工具，而是提供一个**固定工具接口 + 可持续扩展动作注册表（Action Registry）** 的架构，让 GitHub Copilot、Cursor 及其他兼容 MCP 的客户端能够稳定调用 Unreal Editor 能力。
 
-同时包含两个可选的独立 MCP 服务器：
+当前项目由三部分组成：
 
-- `ue-editor-mcp-logs`：暴露 `unreal_logs_get`、`unreal_asset_thumbnail_get`、`unreal_asset_diff_get`、`unreal_asset_history_get`（工具名仅含字母数字与下划线，以兼容 Cursor MCP）
-- `ue-editor-mcp-insights`：面向 Unreal Insights `.utrace` 的离线分析，暴露 trace 摘要导出与卡顿归因工具
+- **`ue-editor-mcp`**：统一主服务器，固定暴露 **7 个 MCP 工具**
+- **`ue-editor-mcp-logs`**：日志 / 资产缩略图 / 资产 diff / 资产历史
+- **`ue-editor-mcp-insights`**：面向 Unreal Insights `.utrace` 的离线分析
 
-> **仅限编辑器** — C++ 模块类型为 `Editor`，在所有游戏打包构建（Shipping、Development Game 等）中完全排除，不会对运行时性能或打包产物产生任何影响。
+> **仅限编辑器** — C++ 模块类型为 `Editor`，不会进入 Shipping、Development Game 等运行时打包产物，不影响游戏运行时性能。
 
 ## 功能特性
 
-- **7 个固定 MCP 工具** — 单一 `ue-editor-mcp` 服务器，工具接口永远不变
-- **141 个动作** — 蓝图、图节点、材质、UMG 控件、MVVM、增强输入、组件事件绑定、PIE 启停/状态查询、日志断言、Outliner 管理、资产缩略图提取、批量资产重命名及重定向修复、与版本控制仓库的差异对比 — 均可通过动作注册表动态发现
-- **离线 trace 分析** — 可选 `ue-editor-mcp-insights` 服务器支持 `.utrace -> SummarizeTrace -> CSV 归因`
-- **搜索 → 模式 → 执行** — AI 动态发现动作，无需记忆命令名
+- **7 个固定 MCP 工具** — 单一 `ue-editor-mcp` 服务器，工具接口长期稳定
+- **Action Registry 架构** — Python 侧统一注册动作元数据，AI 通过搜索 → schema → 执行完成操作
+- **蓝图自动化编辑** — 蓝图创建、编译、变量/函数管理、节点操作、图结构导出、补丁应用
+- **图编辑增强** — 自动布局、自动注释、节点选区编排、折叠为函数/宏、跨图导入导出节点
+- **材质系统支持** — 材质创建、表达式编辑、属性设置、编译诊断、自动布局、自动注释、实例创建、材质应用到 Actor / Component
+- **UMG / MVVM 支持** — Widget Blueprint、控件树编辑、事件绑定、属性设置、MVVM ViewModel / Binding 管理
+- **输入系统支持** — Legacy Input 与 Enhanced Input 资产 / Mapping Context 管理
+- **编辑器能力扩展** — Actor、Viewport、Outliner、PIE、Asset 操作、Asset Editor 打开、Level Streaming 管理
+- **DataTable 支持** — CSV 导入 / 导出
+- **日志上下文能力** — 实时日志、Saved/Logs 离线读取、日志断言、编译错误辅助排查
+- **源码控制相关能力** — 资产缩略图、资产历史、对比仓库版本、Blueprint revisions diff
+- **离线 Trace 分析** — `ue-editor-mcp-insights` 支持 `.utrace -> SummarizeTrace -> CSV -> 卡顿归因`
+- **Niagara 能力接入** — 已集成 Monolith Niagara port，对 Niagara 动作做统一注册与调度
+- **持久 TCP 连接** — Python 服务器与编辑器插件之间保持长连接，减少重复握手开销
 - **批量执行** — `ue_batch` 通过 C++ `batch_execute` 在**单次 TCP 往返**中执行最多 50 个动作
-- **多客户端 TCP** — 端口 55558，最多支持 8 路并发连接（每连接独立线程）
-- **持久连接** — Socket 在命令间保持开启，支持心跳检测与自动重连
-- **自动保存** — 每次成功操作后自动保存脏包
-- **崩溃保护** — 动作执行管道启用了 SEH + C++ 异常防护
-- **字符串解析** — 接受蓝图名称、资产路径或引擎类名
-- **嵌入式文档** — `ue_resources_read` 将约定规范、错误码和补丁规范暴露给 AI
+- **多客户端支持** — 默认监听 `127.0.0.1:55558`，支持最多 8 路并发连接
+- **崩溃保护** — 动作执行链路包含 SEH + C++ 异常防护
+- **自动化配置** — `setup_mcp.ps1` / `setup_mcp.bat` 自动创建 venv，并生成 VS Code / Cursor 的 MCP 配置
 
 ## 架构
 
+```text
+VS Code / Cursor / MCP Client（GitHub Copilot 等）
+        │
+        ├── ue-editor-mcp             （7 fixed tools, stdio）
+        ├── ue-editor-mcp-logs        （logs / thumbnails / diff / history）
+        └── ue-editor-mcp-insights    （utrace offline analysis）
+                     │
+                     ▼
+        Python MCP Servers
+        ├── server_unified.py
+        ├── server_unreal_logs.py
+        └── server_unreal_insights.py
+                     │
+                     │ TCP/JSON（端口 55558，长度前缀帧）
+                     ▼
+        C++ 插件（FMCPServer → 每连接一个 FMCPClientHandler）
+                     │
+                     │ 游戏线程分发
+                     ▼
+        FEditorAction / Niagara Action / Editor API
+                     │
+                     ▼
+                Unreal Editor
 ```
-VS Code / MCP 客户端（GitHub Copilot 等）
-        │
-        │  7 个 MCP 工具（stdio）
-        ▼
-  server_unified.py（动作注册表 + 分发器）
-        │
-        │  TCP/JSON（端口 55558，持久连接，长度前缀帧）
-        ▼
-  C++ 插件（FMCPServer → 每连接一个 FMCPClientHandler）
-        │
-        │  游戏线程分发
-        ▼
-  FEditorAction 子类（~150 个处理器）→ 校验 → 执行 → 自动保存
-        │
-        ▼
-  Unreal Editor
+
+主工作链路是：
+
+1. MCP 客户端通过 **stdio** 启动 Python MCP server
+2. Python 侧根据工具请求解析动作、构造参数
+3. Python 通过持久 TCP 连接把命令发给 Unreal Editor 内的 C++ 插件
+4. C++ 插件把编辑器修改调度到 **GameThread**
+5. 返回结构化 JSON 结果给客户端
+
+## MCP 服务器说明
+
+### 1) `ue-editor-mcp`
+
+主服务器，对外暴露固定的 7 个 MCP 工具：
+
+| # | 工具 | 用途 |
+|---|------|------|
+| 1 | `ue_ping` | 测试与 Unreal Editor 的连接 |
+| 2 | `ue_actions_search` | 按关键字 / 标签搜索动作 |
+| 3 | `ue_actions_schema` | 查询指定动作的输入 schema / 示例 / 元数据 |
+| 4 | `ue_actions_run` | 执行单个动作 |
+| 5 | `ue_batch` | 批量执行多个动作（单次 TCP 往返） |
+| 6 | `ue_resources_read` | 读取嵌入式资源文档 |
+| 7 | `ue_logs_tail` | 查看 Python 命令日志 / 编辑器日志缓冲区 |
+
+这个服务器是**主要入口**。  
+AI 一般通过下面两种工作流来调用能力。
+
+#### AI 工作流（快速路径 — 1 次往返）
+
+```text
+# 当动作 ID 和参数已经明确时，直接用 ue_batch：
+ue_batch(actions=[
+  {action_id: "blueprint.create", params: {name: "BP_Player", parent_class: "Character"}},
+  {action_id: "variable.create", params: {blueprint_name: "BP_Player", variable_name: "Speed", variable_type: "Float"}},
+  {action_id: "blueprint.compile", params: {blueprint_name: "BP_Player"}}
+])
 ```
 
-单一 Python 服务器进程与 C++ 服务器建立持久 TCP 连接。C++ 侧为每个连接派生独立的 `FMCPClientHandler` 线程，所有编辑器变更均被序列化到游戏线程以保证线程安全。
+#### AI 工作流（发现路径 — 3 次往返）
 
-对于日志与性能分析场景，两个轻量独立服务器可并行运行：
+```text
+第 1 步：ue_actions_search(query="create blueprint")
+  → 返回匹配动作 ID 列表
 
-`server_unreal_logs.py` 提供：
-- `unreal_logs_get`（即使 UE 未运行也可通过 `Saved/Logs` 离线读取）
-- `unreal_asset_thumbnail_get`（需要 UE 编辑器连接，以 PNG base64 格式返回资产缩略图）
-- `unreal_asset_diff_get`（需要 UE 编辑器 + 源码控制连接，返回资产与仓库版本的结构化差异）
-- `unreal_asset_history_get`（列出资产在源码控制中的修订历史）
+第 2 步：ue_actions_schema(action_id="blueprint.create")
+  → 返回输入 schema、示例、描述
 
-`server_unreal_insights.py` 提供：
+第 3 步：ue_actions_run(action_id="blueprint.create", params={...})
+  → 执行动作并返回结果
+```
+
+---
+
+### 2) `ue-editor-mcp-logs`
+
+面向日志与资产上下文的轻量独立服务器，当前暴露 4 个工具：
+
+- `unreal_logs_get`
+- `unreal_asset_thumbnail_get`
+- `unreal_asset_diff_get`
+- `unreal_asset_history_get`
+
+适合以下场景：
+
+- 获取实时编辑器日志
+- 在 UE 未连接时，从 `Saved/Logs` 做离线读取
+- 获取资产缩略图（PNG base64 / image block）
+- 查看资产源码控制历史
+- 对比资产与仓库版本差异
+
+---
+
+### 3) `ue-editor-mcp-insights`
+
+面向 `.utrace` 离线性能分析的独立服务器，当前暴露：
+
 - `unreal_insights_summarize_trace`
 - `unreal_insights_summarize_thread_scopes`
 - `unreal_insights_analyze_trace`
 - `unreal_insights_analyze_frame_window`
 - `unreal_insights_explain_stutter`
 
-## MCP 工具（7 个固定）
+适合以下场景：
 
-| # | 工具 | 用途 |
-|---|------|------|
-| 1 | `ue_ping` | 测试与 Unreal Engine 的连接，存活时返回 `{pong: true}` |
-| 2 | `ue_actions_search` | 按关键字或标签搜索动作，返回排序后的动作 ID 列表及描述 |
-| 3 | `ue_actions_schema` | 获取指定动作的完整输入模式、示例和元数据 |
-| 4 | `ue_actions_run` | 执行单个带参数的动作 |
-| 5 | `ue_batch` | 通过 C++ `batch_execute` 在**单次 TCP 往返**中执行多个动作，最多 50 个 |
-| 6 | `ue_resources_read` | 读取嵌入式文档：`conventions.md`、`error_codes.md`、`patch_spec.md` |
-| 7 | `ue_logs_tail` | 追踪近期日志（Python 命令日志 / 编辑器环形缓冲区 / 两者），支持分类和详细级别过滤 |
+- 调用 `SummarizeTrace` 导出 CSV 摘要
+- 做线程级热点归因
+- 分析某段 frame window
+- 生成更适合直接回复用户的“卡顿原因解释”
 
-### AI 工作流（快速路径 — 1 次往返）
+## 当前能力覆盖
 
+README 不再强依赖容易过时的“动作总数”统计，下面按能力域说明当前覆盖范围。
+
+| 域 | 说明 | 典型动作 |
+|----|------|----------|
+| `blueprint.*` | 蓝图创建、编译、属性、父类、接口、组件、完整快照 | `blueprint.create`、`blueprint.compile`、`blueprint.describe_full` |
+| `component.*` | 组件属性、静态网格、物理、组件事件绑定 | `component.set_property`、`component.bind_event` |
+| `node.*` | 蓝图节点创建 | `node.add_event`、`node.add_function_call`、`node.add_branch` |
+| `graph.*` | 图连接、描述、注释、补丁、选区、折叠、跨图导入导出 | `graph.describe`、`graph.apply_patch`、`graph.collapse_selection_to_function` |
+| `layout.*` | 自动布局与批量布局注释 | `layout.auto_selected`、`layout.auto_blueprint` |
+| `variable.*` | 变量创建、重命名、默认值、元数据 | `variable.create`、`variable.set_default` |
+| `function.*` | 函数创建、调用、删除、重命名 | `function.create`、`function.rename` |
+| `dispatcher.*` | 事件派发器与 delegate 创建 / 绑定 | `dispatcher.create`、`dispatcher.create_event` |
+| `material.*` | 材质创建、表达式、编译、布局、注释、实例、应用 | `material.create`、`material.compile`、`material.apply_to_actor` |
+| `widget.*` | UMG Widget Blueprint 编辑、控件树、属性与事件绑定 | `widget.create`、`widget.get_tree`、`widget.set_properties` |
+| `widget.mvvm_*` | MVVM ViewModel / Binding 管理 | `widget.mvvm_add_viewmodel`、`widget.mvvm_get_bindings` |
+| `input.*` | Legacy Input / Enhanced Input 管理 | `input.create_action`、`input.create_mapping_context` |
+| `editor.*` | 编辑器、Actor、Asset、PIE、日志、Outliner、Level Streaming | `editor.spawn_actor`、`editor.start_pie`、`editor.get_outliner_tree` |
+| `batch.*` | 批量执行 | `batch.execute` |
+
+另外，C++ 侧还接入了 **Niagara Monolith port**，通过 `niagara_*` 类型命令统一调度。
+
+## 编译诊断建议
+
+### Blueprint 编译诊断
+
+- `blueprint.compile` 返回状态与汇总计数
+- 对某些复杂 UMG / MVVM 编译失败，完整编译器文本未必都包含在 compile 返回值中
+- 更可靠的排查方法：
+
+```text
+1. blueprint.compile
+2. editor.get_logs(count=200, category="LogBlueprint", min_verbosity="Error")
+3. 如需更底层上下文，再看 LogOutputDevice / Ensure / Fatal
 ```
-# 当动作 ID 及参数已知时，直接跳过搜索/模式步骤：
-ue_batch(actions=[
-  {action_id: "blueprint.create", params: {name: "BP_Player", parent_class: "Character"}},
-  {action_id: "variable.create", params: {blueprint_name: "BP_Player", variable_name: "Speed", variable_type: "Float"}},
-  {action_id: "blueprint.compile", params: {blueprint_name: "BP_Player"}}
-])
-→ 所有动作在 1 次 TCP 往返中完成
+
+### Material 编译诊断
+
+- `material.compile` 会等待材质编译完成
+- 返回 `error_count`、`warning_count`、`errors[]`
+- 每条错误尽可能关联 `expression_name` / `expression_class` / `node_name`
+
+推荐排查流程：
+
+```text
+1. material.compile
+2. ue_logs_tail(source="editor", category="LogMaterial", min_verbosity="Error")
 ```
 
-### AI 工作流（发现路径 — 3 次往返）
+## 自动布局命令
 
-```
-第 1 步：ue_actions_search(query="create blueprint")
-  → [{id: "blueprint.create", desc: "..."}, ...]
+### 蓝图编辑器
 
-第 2 步：ue_actions_schema(action_id="blueprint.create")
-  → {input_schema: {required: ["name","parent_class"], ...}, examples: [...]}
+插件会在 Blueprint Editor 中注册 **Auto Layout** 命令：
 
-第 3 步：ue_actions_run(action_id="blueprint.create", params={name: "BP_Player", parent_class: "Character"})
-  → {success: true, blueprint_name: "BP_Player", path: "/Game/Blueprints/BP_Player"}
-```
-
-### 动作域（核心）
-
-| 域 | 数量 | 说明 | 示例 ID |
-|----|------|------|--------|
-| `blueprint.*` | 11 | 蓝图增删改查、组件、接口、完整快照 | `blueprint.create`、`blueprint.compile`、`blueprint.add_component`、`blueprint.describe_full` |
-| `batch.*` | 1 | 批量命令执行 | `batch.execute` |
-| `component.*` | 4 | 组件属性、网格体、物理、事件绑定 | `component.set_property`、`component.set_static_mesh`、`component.bind_event` |
-| `editor.*` | 18 | 关卡 Actor、视口、资产、日志、生命周期、源码控制差异 | `editor.spawn_actor`、`editor.list_assets`、`editor.get_logs`、`editor.is_ready`、`editor.request_shutdown` |
-| `layout.*` | 3 | 节点自动布局 | `layout.auto_selected`、`layout.auto_subtree`、`layout.auto_blueprint` |
-| `node.*` | 19 | 蓝图图节点创建 | `node.add_event`、`node.add_function_call`、`node.add_branch` |
-| `variable.*` | 8 | 变量增删改查、默认值、元数据 | `variable.create`、`variable.add_getter`、`variable.set_default` |
-| `function.*` | 4 | 函数创建、管理与重构 | `function.create`、`function.call`、`function.delete`、`function.rename` |
-| `dispatcher.*` | 4 | 事件派发器管理 | `dispatcher.create`、`dispatcher.call`、`dispatcher.bind` |
-| `graph.*` | 18 | 图连线、检视、注释、补丁、折叠重构 | `graph.connect_nodes`、`graph.describe`、`graph.get_selected_nodes`、`graph.collapse_selection_to_function`、`graph.auto_comment`、`graph.apply_patch` |
-| `macro.*` | 1 | 宏管理 | `macro.rename` |
-| `material.*` | 16 | 材质创建、编辑、编译诊断、图检视与布局、关卡应用、编辑器刷新 | `material.create`、`material.add_expression`、`material.compile`、`material.get_summary`、`material.auto_layout`、`material.auto_comment`、`material.remove_expression`、`material.apply_to_component`、`material.apply_to_actor`、`material.refresh_editor` |
-| `widget.*` | 21 | UMG 控件蓝图（24 种类型）+ MVVM | `widget.create`、`widget.add_component`、`widget.mvvm_add_viewmodel`、`widget.mvvm_remove_viewmodel` |
-| `input.*` | 4 | 增强输入系统 | `input.create_action`、`input.create_mapping_context` |
-
-### 编译诊断（重要）
-
-- `blueprint.compile` 返回状态及汇总计数（`status`、`error_count`、`warning_count`），但对某些 UMG/MVVM 编译失败可能不包含完整编译器文本。
-- 如需详细诊断，请调用 `editor.get_logs`（或带 `source="editor"` 的 `ue_logs_tail`），并按 `category="LogBlueprint"` + `min_verbosity="Error"` 过滤。
-- 推荐排查流程：
-  1. `blueprint.compile`
-  2. `editor.get_logs(count=200, category="LogBlueprint", min_verbosity="Error")`
-  3. 如需进一步扩展，可将过滤类别改为 `category="LogOutputDevice"` 获取 Ensure/Fatal 上下文
-
-### 材质编译诊断（Phase 5）
-
-- `material.compile` 现已同步等待材质着色器编译完成，并返回真实编译诊断。
-- 响应中包含 `error_count`、`warning_count` 以及 `errors[]` 列表。
-- `errors[]` 的每一项包含：`message`、`expression_name`、`expression_class`、`node_name`（如可解析）。
-- 推荐排查流程：
-  1. `material.compile`
-  2. 若有需要，再结合 `ue_logs_tail(source="editor", category="LogMaterial", min_verbosity="Error")` 查看上下文日志
-
-## 蓝图编辑器自动布局命令
-
-插件在蓝图编辑器菜单（`编辑` → `Auto Layout`）中直接注册了自动布局命令，并提供默认快捷键：
-
-- `Auto Layout`：`Ctrl+Alt+L`
+- 菜单：`编辑 -> Auto Layout`
+- 默认快捷键：`Ctrl + Alt + L`
 
 行为：
-- 若有节点被选中，对当前选中节点执行布局
-- 若无选中，对整个焦点图执行布局
 
-这些是编辑器命令，可在 Unreal Editor 快捷键设置中重映射。
+- 有选中节点：布局当前选区
+- 无选中节点：布局当前焦点图
 
-## 材质编辑器自动布局菜单（Phase 5）
+### 材质编辑器
 
-插件在材质编辑器菜单（`Edit`）中注册了 `Auto Layout` 菜单项。
+插件会在 Material Editor 中注册 **Auto Layout** 菜单项：
+
+- 菜单：`Edit -> Auto Layout`
 
 行为：
-- 对当前焦点材质的 `UMaterialGraph` 执行自动布局
-- 与 `material.auto_layout` 动作配套，便于在编辑器内直接整理材质图
 
-## 安装与配置
+- 对当前材质图执行自动布局
+- 与 `material.auto_layout` 动作保持一致
 
-### 第 1 步：编译 C++ 插件
+---
 
-插件已位于 `Plugins/UEEditorMCP/`，编译编辑器目标：
+## 安装与部署
 
+下面是推荐部署方式，适用于 **VS Code / Cursor + Unreal Editor + MCP** 的常见工作流。
+
+### 第 1 步：将插件放入项目
+
+将本插件放到 Unreal 项目的：
+
+```text
+Plugins/UEEditorMCP/
 ```
-Engine\Build\BatchFiles\Build.bat YourProjectEditor Win64 Development ${workspaceFolder}\YourProject.uproject -waitmutex
+
+确保项目结构类似：
+
+```text
+YourProject/
+├─ Plugins/
+│  └─ UEEditorMCP/
+├─ Content/
+├─ Config/
+└─ YourProject.uproject
 ```
 
-（将 `Engine\Build\BatchFiles` 换成本机 UE 安装路径，例如 `F:\UE_5.5\Engine\Build\BatchFiles\Build.bat`。）或使用 VS Code 任务：**YourProjectEditor Win64 Development Build**（若已在 `.vscode/tasks.json` 中配置）。
+---
 
-### 第 2 步：一键 Python 环境配置（使用 UE 引擎内置 Python）
+### 第 2 步：编译 C++ 插件
 
-**无需安装外部 Python。** 配置脚本会自动找到 Unreal Engine 内置的 Python 3.11，创建虚拟环境并安装 MCP 包。
+本插件是 **Editor 模块**，需要编译编辑器目标。
 
-**PowerShell（推荐）：**
+示例：
+
+```powershell
+Engine\Build\BatchFiles\Build.bat YourProjectEditor Win64 Development <项目根>\YourProject.uproject -waitmutex
+```
+
+例如：
+
+```powershell
+F:\UE_5.7\Engine\Build\BatchFiles\Build.bat MyGameEditor Win64 Development F:\Work\MyGame\MyGame.uproject -waitmutex
+```
+
+也可以直接使用 Visual Studio / Rider / VS Code 任务编译编辑器目标。
+
+> 如果你的项目能正常编译编辑器插件，UEEditorMCP 会随编辑器一起加载。
+
+---
+
+### 第 3 步：配置 Python MCP 环境（推荐一键方式）
+
+本项目推荐使用 **Unreal Engine 自带 Python** 自动创建虚拟环境。  
+通常**不需要单独安装系统 Python**。
+
+#### PowerShell（推荐）
+
+在插件目录执行：
+
 ```powershell
 cd Plugins/UEEditorMCP
 .\setup_mcp.ps1
-# 或显式指定引擎路径：
-.\setup_mcp.ps1 -EngineRoot "${workspaceFolder:UE5}"
 ```
 
-**命令提示符：**
+如果自动检测不到引擎路径，可以显式指定：
+
+```powershell
+.\setup_mcp.ps1 -EngineRoot "F:\UE_5.7"
+```
+
+#### 命令提示符
+
 ```cmd
 cd Plugins\UEEditorMCP
 setup_mcp.bat
 ```
 
-脚本将会：
-1. 自动检测 UE 引擎内置 Python（`Engine/Binaries/ThirdParty/Python3/Win64/python.exe`）
-2. 在 `Python/.venv` 创建虚拟环境
-3. 安装 `mcp` 包
-4. 在项目根目录生成 `.vscode/mcp.json`，并填入正确路径
+#### 脚本会自动完成的事情
 
-<details>
-<summary><strong>手动配置（可选）</strong></summary>
+`setup_mcp.ps1` / `setup_mcp.bat` 会：
 
-如需手动配置或使用自定义 Python：
+1. 自动定位 Unreal Engine 内置 Python
+2. 在 `Plugins/UEEditorMCP/Python/.venv` 创建虚拟环境
+3. 安装 `requirements.txt` 中依赖
+4. 调用 `ensure_mcp_servers.ps1`
+5. 自动生成：
+   - `.vscode/mcp.json`
+   - `.cursor/mcp.json`
+
+也就是说，**现在推荐的部署方式是直接跑脚本**，不再建议优先手写 MCP 配置。
+
+---
+
+### 第 4 步：确认生成的 MCP 配置
+
+脚本会在项目根目录生成两份配置：
+
+#### VS Code
+
+```text
+.vscode/mcp.json
+```
+
+#### Cursor
+
+```text
+.cursor/mcp.json
+```
+
+其中会自动配置三个服务器：
+
+- `ue-editor-mcp`
+- `ue-editor-mcp-logs`
+- `ue-editor-mcp-insights`
+
+并自动填好：
+
+- venv Python 路径
+- `PYTHONPATH`
+- `WORKSPACE_ROOT`（Insights server 用）
+
+---
+
+### 第 5 步：启动顺序
+
+推荐启动顺序如下：
+
+1. **打开 Unreal 项目**
+   - 插件加载后，C++ TCP 服务器会在本地启动，默认监听 `127.0.0.1:55558`
+
+2. **打开 VS Code 或 Cursor**
+   - MCP 客户端会根据生成的配置自动启动 Python MCP servers
+
+3. **在聊天窗口中调用**
+   - GitHub Copilot / Cursor / 其他兼容 MCP 客户端 即可通过 MCP 工具访问 UE 编辑器能力
+
+---
+
+## 手动配置（可选）
+
+如果你不想使用自动脚本，也可以手动配置。
+
+### 1) 创建 Python venv
 
 ```bash
 cd Plugins/UEEditorMCP/Python
 python -m venv .venv
-.venv\Scripts\activate        # Windows
+```
+
+Windows 激活：
+
+```bash
+.venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-然后在项目根目录创建 `.vscode/mcp.json`：
+### 2) 手动写 `.vscode/mcp.json`
 
 ```jsonc
 {
@@ -241,140 +415,178 @@ pip install -r requirements.txt
 }
 ```
 
-</details>
+### 3) Cursor 配置格式
 
-### 日志上下文工具（`ue-editor-mcp-logs`）
+如果是 Cursor，需要使用 `.cursor/mcp.json`，字段名为 `mcpServers`，格式与 `ensure_mcp_servers.ps1` 自动生成的内容一致。
 
-`ue-editor-mcp-logs` 暴露四个工具：
+---
 
-**`unreal_logs_get`**
-- `mode`：`auto|live|saved`（默认 `auto`）
-- `tailLines`：默认 `200`（范围 `20..2000`）
-- `maxBytes`：默认 `65536`（范围 `8192..1048576`）
-- `cursor`：增量游标（`live:<seq>` 或 `file:<hash>:<offset>:<mtime_ns>:<size>`）
-- `workspaceRoot`：UE 不可达时的离线读取必填项
+## 日志上下文工具（`ue-editor-mcp-logs`）
+
+### `unreal_logs_get`
+
+支持实时日志、Saved/Logs 追踪和离线回退。
+
+主要参数：
+
+- `mode`：`auto | live | saved`
+- `tailLines`：默认 `200`
+- `maxBytes`：默认 `65536`
+- `cursor`：增量游标
+- `workspaceRoot`：UE 不可达时用于离线读取
+- `filter.minVerbosity`
+- `filter.category`
+- `filter.contains`
 
 推荐用法：
-1. 首次调用：`mode=auto, tailLines=200, maxBytes=65536`
+
+1. 首次读取：
+   ```text
+   mode=auto, tailLines=200, maxBytes=65536
+   ```
 2. 保存返回的 `cursor`
-3. 后续调用传入 `cursor`，仅获取增量日志，避免 token 爆炸
+3. 后续继续传 `cursor` 做增量读取
 
-行为说明：
-- `mode=auto`：若日志在 2 秒内更新则优先读取实时环形缓冲区，否则回退到 `Saved/Logs`
-- `mode=live`：仅读取内存中的实时环形缓冲区，无文件 IO
-- `mode=saved`：使用反向块读取方式追踪最新 `Saved/Logs` 文件
-- UE 不可达时：若提供 `workspaceRoot` 则从磁盘返回 `offline_saved`
+---
 
-**`unreal_asset_thumbnail_get`**
-- `assetPath`：可选，单个资产完整路径
-- `assetPaths`：可选，多个完整路径
-- `assetIds` / `ids`：可选，路径数组别名（批量）
-- `size`：可选，缩略图尺寸（默认 `256`，上限 `1..256`）
-- 返回 `thumbnails[]`（每个输入对应一项），并保留首项兼容字段 `image_base64`
-- 需要 UE 编辑器连接
+### `unreal_asset_thumbnail_get`
 
-**`unreal_asset_diff_get`**
-- `assetPath`（必填）：完整资产路径（如 `/Game/Blueprints/BP_Foo`）
-- `revision`（可选）：指定版本号（默认最新版本）
-- 返回结构化差异数据：`hasDifferences`、`summary`（新增/删除/修改/次要变更计数）、`diffs[]`（类型、分类、显示字符串、所属图、节点/引脚名称）
-- 对于蓝图：逐图节点级别变更（NODE_ADDED、NODE_REMOVED、PIN_DEFAULT_VALUE、NODE_MOVED 等）
-- 对于通用资产：属性级别差异（PropertyValueChanged、PropertyAddedToA/B）
-- 包含 `revisionInfo`（版本号、日期、用户名、描述）
-- 需要 UE 编辑器运行且源码控制（SVN/Perforce/Git）已连接
+获取资产缩略图。
 
-**`unreal_asset_history_get`**
-- `assetPath`（必填）：完整资产路径
-- `maxCount`（可选）：最多返回的修订条数
-- 需要 UE 编辑器运行且源码控制已连接；可先查历史再对指定 `revision` 调用 `unreal_asset_diff_get`
+支持：
 
-### Unreal Insights 离线分析工具（`ue-editor-mcp-insights`）
+- `assetPath`
+- `assetPaths`
+- `assetIds`
+- `ids`
+- `size`
 
-`ue-editor-mcp-insights` 面向 `.utrace` 离线分析，不依赖 UE 编辑器 TCP 连接。
+返回：
 
-暴露工具：
+- `thumbnails[]`
+- 兼容字段 `image_base64`
 
-**`unreal_insights_summarize_trace`**
-- 输入：`tracePath`
-- 可选：`projectPath`、`editorCmdPath`、`engineRoot`、`timeoutSeconds`
-- 可选：`includeThreadScopes`、`threadNames`、`timeStartSeconds`/`timeEndSeconds`（同时导出线程级摘要）
-- 调用 `UnrealEditor-Cmd.exe -run=SummarizeTrace`
-- 输出 `Scopes.csv`、`Bookmarks.csv` 等摘要路径
+---
 
-**`unreal_insights_summarize_thread_scopes`**
-- 输入：`tracePath`
-- 可选：`insightsPath`、`engineRoot`、`threadNames`、`timeStartSeconds`/`timeEndSeconds`、`timeoutSeconds`
-- 通过 `UnrealInsights.exe` 导出各线程 timing events，聚合为 `ThreadScopes.csv`
-- 默认线程：`GameThread`、`RenderThread 0`、`RHIThread`
+### `unreal_asset_diff_get`
 
-**`unreal_insights_analyze_trace`**
-- 输入：`tracePath`
-- 读取同名 stem 的 `Scopes.csv` / `Bookmarks.csv`（若存在则含 `ThreadScopes.csv`）
-- 返回全局热点、bookmark 聚类、**按线程的热点**（`topScopesByThread`）、**scope 线程归属**（`scopeThreadOwnership`）、可能的卡顿模式
+对比资产与源码控制版本。
 
-**`unreal_insights_analyze_frame_window`**
-- 输入：`tracePath`
-- 可选：`frameStart`、`frameEnd`、`timeStartSeconds`、`timeEndSeconds`
-- 用于将指定帧段粗映射到时间窗，并聚焦附近事件
-- 若存在 `ThreadScopes.csv`，额外返回 `threadScopesInWindow` / `topScopesByThreadInWindow`
+支持：
 
-**`unreal_insights_explain_stutter`**
-- 输入：`tracePath`
-- 可选：帧窗或时间窗参数
-- 输出更偏结论型的归因文案，例如：
-  - 地形 / 碰撞同步尖峰
-  - Level Streaming 集中结算
-  - 稳态渲染压力
+- Blueprint 节点级 diff
+- 通用资产属性级 diff
+- 指定 revision
 
-使用建议：
+---
 
-1. 先调用 `unreal_insights_summarize_trace`
-2. 需要 scope 线程归属时，调用 `unreal_insights_summarize_thread_scopes`（或在 summarize 时设 `includeThreadScopes=true`）
-3. 再调用 `unreal_insights_analyze_trace`
-4. 如果用户指定帧段，再调用 `unreal_insights_analyze_frame_window`
-5. 最后用 `unreal_insights_explain_stutter` 生成更适合直接回复用户的结论
+### `unreal_asset_history_get`
 
-注意：
+列出资产源码控制历史修订，可与 `unreal_asset_diff_get` 配合使用。
 
-- 该服务器是基于 CSV 摘要的分析，不替代 Insights GUI 的逐线程 flame chart 精度
-- 若 `SummarizeTrace` 返回非零退出码，但 CSV 已生成，仍应检查输出内容而不是直接判定失败
+---
 
-### 第 3 步：启动
+## Unreal Insights 离线分析工具（`ue-editor-mcp-insights`）
 
-1. 在编辑器中打开 Unreal 项目（插件自动在端口 55558 启动 TCP 服务器）
-2. 打开 VS Code — `ue-editor-mcp` 服务器通过 stdio 启动并连接到端口 55558
-3. 使用 GitHub Copilot Chat 或任意兼容 MCP 的客户端发出命令
+### `unreal_insights_summarize_trace`
+
+对 `.utrace` 执行 `SummarizeTrace`，导出：
+
+- `Scopes.csv`
+- `Bookmarks.csv`
+- 以及其他摘要 CSV
+
+可选：
+
+- `projectPath`
+- `editorCmdPath`
+- `engineRoot`
+- `timeoutSeconds`
+- `includeThreadScopes`
+
+---
+
+### `unreal_insights_summarize_thread_scopes`
+
+通过 `UnrealInsights.exe` 导出线程 timing events，聚合为 `ThreadScopes.csv`。
+
+默认线程：
+
+- `GameThread`
+- `RenderThread 0`
+- `RHIThread`
+
+---
+
+### `unreal_insights_analyze_trace`
+
+读取已有 CSV，输出：
+
+- 全局热点
+- bookmark 聚类
+- 按线程热点
+- scope 线程归属
+- 卡顿模式检测
+
+---
+
+### `unreal_insights_analyze_frame_window`
+
+对指定帧段或时间窗做聚焦分析。
+
+---
+
+### `unreal_insights_explain_stutter`
+
+输出更偏“结论型”的解释，适合直接作为用户回复。
+
+推荐工作流：
+
+```text
+1. unreal_insights_summarize_trace
+2. unreal_insights_summarize_thread_scopes（可选，但推荐）
+3. unreal_insights_analyze_trace
+4. unreal_insights_analyze_frame_window（需要帧段时）
+5. unreal_insights_explain_stutter
+```
+
+---
 
 ## 新增动作
 
-若要为插件扩展新能力：
+如果要扩展插件能力，通常分三步：
 
-### 第 1 步：C++ 侧 — 实现动作处理器
+### 第 1 步：C++ 侧实现动作
+
+例如新增一个 Action：
 
 ```cpp
-// Source/Public/Actions/MyActions.h
-class FMyNewAction : public FBlueprintNodeAction
+// Source/UEEditorMCP/Public/Actions/MyActions.h
+class FMyNewAction : public FEditorAction
 {
 public:
-    FMyNewAction() : FBlueprintNodeAction(TEXT("my_new_action")) {}
-    FString Validate(const TSharedPtr<FJsonObject>& Params) override;
-    TSharedPtr<FJsonObject> ExecuteInternal(const TSharedPtr<FJsonObject>& Params) override;
+    FMyNewAction() : FEditorAction(TEXT("my_new_action")) {}
+    virtual FString Validate(const TSharedPtr<FJsonObject>& Params) override;
+    virtual TSharedPtr<FJsonObject> ExecuteInternal(const TSharedPtr<FJsonObject>& Params) override;
 };
 ```
 
-在 `MCPBridge.cpp` 中注册：
+并在 `MCPBridge.cpp` 注册：
+
 ```cpp
 ActionHandlers.Add(TEXT("my_new_action"), MakeShared<FMyNewAction>());
 ```
 
-### 第 2 步：Python 侧 — 添加 ActionDef
+### 第 2 步：Python 侧注册 ActionDef
 
-在 `registry/actions.py` 中添加动作定义：
+在 `Python/ue_editor_mcp/registry/actions.py` 添加：
+
 ```python
 ActionDef(
     id="domain.my_new_action",
     command="my_new_action",
     description="这个动作的用途说明",
-    tags=["domain", "keyword1", "keyword2"],
+    tags=("domain", "keyword1", "keyword2"),
     input_schema={
         "type": "object",
         "properties": {
@@ -382,159 +594,117 @@ ActionDef(
         },
         "required": ["param1"],
     },
-    examples=[{"param1": "value"}],
+    examples=(
+        {"param1": "value"},
+    ),
 )
 ```
 
-### 第 3 步：编译与测试
+### 第 3 步：重新编译并重启
 
-```
+```powershell
 Engine\Build\BatchFiles\Build.bat YourProjectEditor Win64 Development <项目根>\YourProject.uproject -waitmutex
 ```
 
-无需修改任何服务器代码 — `ue_actions_search` / `ue_actions_run` 将自动识别新动作。
+然后重启编辑器 / MCP 客户端即可。
+
+> 一般情况下，不需要修改 `server_unified.py` 本身；只要 C++ 命令和 ActionDef 注册完成，`ue_actions_search / schema / run` 就能自动识别。
 
 ## 编辑器专属安全保障
 
-本插件通过三重机制**保证永远不出现在打包构建中**：
+本插件通过多层机制保证仅在编辑器环境生效：
 
 | 层级 | 机制 | 效果 |
 |------|------|------|
-| `.uplugin` | `"Type": "Editor"` | UBT 对所有非编辑器目标跳过此模块 |
-| `.Build.cs` | 依赖 `UnrealEd`、`BlueprintGraph`、`Kismet`、`UMGEditor` 等 | 无法链接到游戏目标（这些模块在游戏构建中不存在） |
-| `.uplugin` | `"PlatformAllowList": ["Win64", "Mac", "Linux"]` | 仅限桌面编辑器平台 |
+| `.uplugin` | `"Type": "Editor"` | 非编辑器目标不会加载该模块 |
+| `.Build.cs` | 依赖 `UnrealEd`、`BlueprintGraph`、`UMGEditor`、`MaterialEditor` 等编辑器模块 | 游戏目标无法链接这些依赖 |
+| `.uplugin` | `PlatformAllowList = Win64 / Mac / Linux` | 仅支持桌面编辑器平台 |
 
-TCP 服务器、所有 MCP 工具以及所有蓝图操作代码**仅存在于编辑器 DLL 中**。
+TCP 服务器、MCP 工具和所有编辑器操作逻辑都只存在于编辑器模块中。
 
 ## 技术细节
 
-### C++ 服务器（`FMCPServer`）
+### C++ TCP 服务器（`FMCPServer`）
 
-- 监听 `127.0.0.1:55558`（仅限本地，不对网络暴露）
-- Accept 循环为每个连接派生独立的 `FMCPClientHandler`（每个独立线程）
-- `ping` 和 `close` 直接在客户端线程处理（无需游戏线程）
-- 所有其他命令通过 `AsyncTask` + `FEvent` 同步分发到游戏线程
-- 客户端超时：120 秒无活动后断开
-- 启用 `SO_REUSEADDR`，避免编辑器重启时端口冲突
+- 监听 `127.0.0.1:55558`
+- 每个连接由独立 `FMCPClientHandler` 线程处理
+- `ping` / `close` 等轻量命令可直接在线程侧处理
+- 其他编辑器命令统一切到 `GameThread`
+- 连接超时默认 `120s`
+- 启用 `SO_REUSEADDR`
+- 默认最大客户端数：`8`
 
-### Python 服务器（`server_unified.py`）
+### Python 统一服务器（`server_unified.py`）
 
-- 对外暴露 7 个固定工具的单一 MCP 服务器
-- 动作注册表含 141 个 ActionDef 条目，支持关键字搜索和模式自省
-- UMG 控件类型通过内部组件类型映射分发（支持 24 种控件类型）
-- `ue_batch` 批量执行（每次最多 50 个动作）
-- 命令日志环形缓冲区，供 `ue_logs_tail` 使用
-- 通过 `ue_resources_read` 暴露嵌入式资源文档
+- 对外暴露 7 个固定工具
+- 通过 Action Registry 做动作搜索与 schema 自省
+- `ue_batch` 最大 50 条动作
+- 维护 Python 侧命令日志 ring buffer
+- 支持从返回结果中抽取 image block
 
-### 通信协议格式
+### 日志服务器（`server_unreal_logs.py`）
 
+- 支持 UE 实时环形日志读取
+- 支持从 `Saved/Logs` 反向 tail
+- 支持 cursor 增量读取
+- 支持资产 diff / history / thumbnail
+
+### Insights 服务器（`server_unreal_insights.py`）
+
+- 读取 `.utrace`
+- 调用 `UnrealEditor-Cmd.exe -run=SummarizeTrace`
+- 调用 `UnrealInsights.exe` 导出线程 scope
+- 基于 CSV 做热点聚合与模式归因
+
+### 通信协议
+
+Python 与 C++ 间通信采用长度前缀协议：
+
+```text
+[4 字节消息长度（大端序）] [UTF-8 JSON payload]
 ```
-[4 字节：消息长度（大端序）] [UTF-8 JSON 载荷]
-```
 
-请求：
+请求示例：
+
 ```json
 {"type": "create_blueprint", "params": {"name": "BP_MyActor", "parent_class": "Actor"}}
 ```
 
-响应：
+响应示例：
+
 ```json
 {"success": true, "blueprint_name": "BP_MyActor", "path": "/Game/Blueprints/BP_MyActor"}
 ```
 
-### 关键文件
+## 关键文件
 
 | 文件 | 用途 |
 |------|------|
-| `Python/ue_editor_mcp/server_unified.py` | 单一 MCP 服务器，7 个工具，动作分发 |
-| `Python/ue_editor_mcp/registry/__init__.py` | ActionRegistry 类，关键字搜索引擎 |
-| `Python/ue_editor_mcp/registry/actions.py` | 141 个带模式/标签/示例的 ActionDef 条目 |
-| `Python/ue_editor_mcp/resources/*.md` | 供 `ue_resources_read` 使用的嵌入式文档 |
-| `Python/ue_editor_mcp/connection.py` | `PersistentUnrealConnection`（TCP、心跳、自动重连） |
-| `Source/Private/MCPServer.cpp` | TCP Accept 循环 + 每客户端处理线程 |
-| `Source/Private/MCPBridge.cpp` | 动作处理器注册表（~150 条命令） |
-| `Source/Private/Actions/*.cpp` | `FEditorAction` 子类具体实现 |
+| `Python/ue_editor_mcp/server_unified.py` | 主 MCP 服务器，固定 7 工具 |
+| `Python/ue_editor_mcp/server_unreal_logs.py` | 日志 / 缩略图 / diff / history 服务器 |
+| `Python/ue_editor_mcp/server_unreal_insights.py` | `.utrace` 离线分析服务器 |
+| `Python/ue_editor_mcp/registry/__init__.py` | ActionRegistry 实现 |
+| `Python/ue_editor_mcp/registry/actions.py` | ActionDef 注册表 |
+| `Python/ue_editor_mcp/connection.py` | 持久 TCP 连接封装 |
+| `Python/ue_editor_mcp/resources/*.md` | 资源文档 |
+| `Source/UEEditorMCP/Private/MCPServer.cpp` | TCP 服务器与客户端处理线程 |
+| `Source/UEEditorMCP/Private/MCPBridge.cpp` | C++ 命令注册与分发中心 |
+| `Source/UEEditorMCP/Private/Actions/*.cpp` | 编辑器动作实现 |
+| `Source/UEEditorMCP/Private/Niagara/*.cpp` | Niagara port 能力实现 |
+| `Source/UEEditorMCP/UEEditorMCP.Build.cs` | 模块依赖配置 |
+| `setup_mcp.ps1` / `setup_mcp.bat` | 一键配置 Python MCP 环境 |
+| `ensure_mcp_servers.ps1` | 自动生成 `.vscode/.cursor` MCP 配置 |
 
 ## 环境要求
 
-- Unreal Engine 5.7+（内置 Python 3.11，无需另行安装）
-- Visual Studio 2022（插件编译所需）
-- VS Code + GitHub Copilot（或任意兼容 MCP 的客户端）
-
-## 开发路线
-
-开发计划详见 [DEVPLAN.md](DEVPLAN.md)。当前状态：
-
-### 阶段一：统一服务器 + 动作注册表 ✅
-
-7 工具统一 MCP 服务器，动作注册表（141 个动作）、关键字搜索、批量执行、嵌入式文档和结构化日志——**全部完成**。
-
-### Phase 6: PIE / 日志断言 / Outliner ✅
-
-| # | Feature | Description | Status |
-|---|---------|-------------|--------|
-| P6.1 | `editor.start_pie` / `editor.stop_pie` / `editor.get_pie_state` | PIE 启动、停止与状态查询，支持自动化运行闭环 | ✅ |
-| P6.2 | `editor.clear_logs` / `editor.assert_log` | 日志会话分段与断言验证，支持基于游标的自动化检查 | ✅ |
-| P6.3 | Outliner 管理动作 | 支持 Actor 重命名、文件夹归类、选择与层级查询 | ✅ |
-
-### Phase 5: 材质系统增强（续）✅
-
-| # | Feature | Description | Status |
-|---|---------|-------------|--------|
-| P5.1 | `material.compile` 诊断增强 | 同步等待编译完成，返回真实 `errors[]`（错误文本 + 关联表达式信息）与准确计数 | ✅ |
-| P5.2 | `material.apply_to_component` | 将材质应用到关卡 Actor 指定组件（支持 `component_name`、`slot_index`） | ✅ |
-| P5.3 | 材质编辑器 `Auto Layout` 菜单 | 在材质编辑器 `Edit` 菜单注册布局命令，直接整理当前材质图 | ✅ |
-| P5.4 | `material.apply_to_actor` | 将材质批量应用到 Actor 全部 `UPrimitiveComponent` | ✅ |
-
-### 阶段二：C++ 增强 ✅
-
-| # | 功能 | 说明 | 状态 |
-|---|------|------|------|
-| P2.1 | `graph.describe` | 完整图拓扑转储（所有节点、引脚、连接、位置） | ✅ |
-| P2.2 | SEH 崩溃保护 | `ExecuteWithCrashProtection()` 中的 `__try/__except` 封装 | ✅ |
-| P2.3 | `editor.get_logs` | 通过自定义 `FOutputDevice` 环形缓冲区进行结构化日志捕获 | ✅ |
-| P2.4 | `batch.execute`（C++） | 单次 TCP 请求 → 串行游戏线程执行多条命令 | ✅ |
-| P2.5 | Python 集成 | 新增 ActionDef + `ue_logs_tail` 编辑器日志桥接 | ✅ |
-| P2.6 | 自定义日志分类 | 全动作范围内以 `LogMCP` 替换 `LogTemp` | ✅ |
-
-### 阶段三：补丁系统 ✅
-
-| # | 功能 | 说明 | 状态 |
-|---|------|------|------|
-| P3.1 | `graph.describe_enhanced` | 扩展拓扑信息（变量引用、完整 PinType、节点元数据）；支持 `compact` 模式降低输出量 | ✅ |
-| P3.2 | 补丁操作定义 | `EPatchOpType` 枚举 + `FPatchOp` 结构体（8 种操作类型） | ✅ |
-| P3.3 | `graph.apply_patch` | 通过 JSON 补丁文档进行声明式图编辑 | ✅ |
-| P3.4 | `graph.validate_patch` | 试运行校验 — 验证所有操作而不修改图 | ✅ |
-| P3.5 | Python 补丁 ActionDef | 补丁动作的注册表条目、模式与示例 | ✅ |
-| P3.6 | 补丁规范文档 | 更新 `patch_spec.md`，含完整操作参考 | ✅ |
-
-### Layout V2: Enhanced Auto-Layout ✅
-
-- `layout.auto_selected` / `layout.auto_subtree` / `layout.auto_blueprint` 已完成 Enhanced Sugiyama 改造：最长路径分层、Barycenter 交叉优化、宽高感知间距、Pure Pin 对齐、周围节点避让、Comment 框调整。
-- `layer_spacing` / `row_spacing` 语义：`>0` 固定间距，`<=0` 自动间距（默认自动）。
-- 新参数（按动作范围）：`horizontal_gap`、`vertical_gap`、`crossing_passes`、`pin_align_pure`、`avoid_surrounding`、`include_pure_deps`、`surrounding_margin`、`preserve_comments`。
-
-### DevPlan 路径规则
-
-- 插件开发计划唯一来源：`Plugins/UEEditorMCP/DEVPLAN.md`。
-- 其他临时计划文档在需求完成后应合并回该文件并移除，避免多份计划口径冲突。
-
-### Phase 4: 材质系统增强 ✅
-
-| # | Feature | Description | Status |
-|---|---------|-------------|--------|
-| P4.1 | `material.get_summary` | 只读 Action，一次性返回材质图完整结构（表达式/连接/属性/注释） | ✅ |
-| P4.2 | 通用连线方案 | 将 `ConnectToExpressionInput()` 从硬编码 Cast<> 重构为通用 `GetInput(index)` 方案 | ✅ |
-| P4.3 | TextureParameter | ExpressionClassMap 新增 TextureParameter/TextureObjectParameter/TextureSampleParameter2D + `create_instance` 纹理覆写 | ✅ |
-| P4.4 | `material.auto_layout` | 数据流拓扑排序分层布局 | ✅ |
-| P4.5 | `material.auto_comment` | 包围盒注释 + 碰撞避让（60px gap, 5 iterations） | ✅ |
-| P4.6 | `material.remove_expression` | 安全删除（断连 + ExpressionCollection 移除 + Context 反注册） | ✅ |
-| P4.7 | StaticSwitchParameter | ExpressionClassMap 新增 StaticSwitchParameter/StaticComponentMaskParameter + `create_instance` switch 覆写 | ✅ |
-| P4.8 | MaterialFunction 引用 | ExpressionClassMap 新增 MaterialFunctionCall + `SetMaterialFunction()` 绑定 | ✅ |
+- Unreal Engine 5.x 编辑器环境
+- Visual Studio 2022 / 对应平台 C++ 构建工具
+- VS Code、Cursor 或其他兼容 MCP 的客户端
+- Windows 优先（脚本与自动配置目前主要围绕 Windows 工作流设计）
 
 ## 文档
 
-- **[DEVPLAN.md](DEVPLAN.md)** — 详细开发计划（各阶段设计文档）
+- **[DEVPLAN.md](DEVPLAN.md)** — 开发计划与阶段性设计记录
 
 ---
 
