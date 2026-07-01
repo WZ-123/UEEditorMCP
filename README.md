@@ -1,7 +1,7 @@
 # UEEditorMCP
 
-> **基于 [lilklon/UEBlueprintMCP](https://github.com/lilklon/UEBlueprintMCP) 修改扩展。**  
-> 原项目采用 **MIT 协议**，本插件在其基础上进行了大量重构与功能增强，同样遵循 MIT 协议发布。  
+> **基于 [lilklon/UEBlueprintMCP](https://github.com/lilklon/UEBlueprintMCP) 改进与扩展。**  
+> 原项目采用 **MIT 协议**，本插件在其基础上重构为面向 Unreal Editor 的固定 MCP 工具接口、动作注册表、持久连接和多领域编辑器自动化能力，同样遵循 MIT 协议发布。  
 > 感谢 [@lilklon](https://github.com/lilklon) 提供的架构基础。
 
 ---
@@ -269,7 +269,7 @@ Engine\Build\BatchFiles\Build.bat YourProjectEditor Win64 Development <项目根
 例如：
 
 ```powershell
-F:\UE_5.7\Engine\Build\BatchFiles\Build.bat MyGameEditor Win64 Development F:\Work\MyGame\MyGame.uproject -waitmutex
+F:\UE_5.x\Engine\Build\BatchFiles\Build.bat MyGameEditor Win64 Development F:\Work\MyGame\MyGame.uproject -waitmutex
 ```
 
 也可以直接使用 Visual Studio / Rider / VS Code 任务编译编辑器目标。
@@ -295,7 +295,7 @@ cd Plugins/UEEditorMCP
 如果自动检测不到引擎路径，可以显式指定：
 
 ```powershell
-.\setup_mcp.ps1 -EngineRoot "F:\UE_5.7"
+.\setup_mcp.ps1 -EngineRoot "F:\UE_5.x"
 ```
 
 #### 命令提示符
@@ -368,7 +368,7 @@ setup_mcp.bat
 
 ## 手动配置（可选）
 
-如果你不想使用自动脚本，也可以手动配置。
+如果你不想使用自动脚本，也可以手动配置。手写 MCP 配置时推荐使用绝对路径；不同客户端对相对路径的解析基准可能不同，自动脚本生成的配置最可靠。
 
 ### 1) 创建 Python venv
 
@@ -630,7 +630,7 @@ TCP 服务器、MCP 工具和所有编辑器操作逻辑都只存在于编辑器
 - 每个连接由独立 `FMCPClientHandler` 线程处理
 - `ping` / `close` 等轻量命令可直接在线程侧处理
 - 其他编辑器命令统一切到 `GameThread`
-- 连接超时默认 `120s`
+- C++ 连接空闲超时默认 `300s`；Python 命令超时默认 `120s`
 - 启用 `SO_REUSEADDR`
 - 默认最大客户端数：`8`
 
@@ -712,5 +712,5 @@ Python 与 C++ 间通信采用长度前缀协议：
 
 MIT
 
-本项目基于 [lilklon/UEBlueprintMCP](https://github.com/lilklon/UEBlueprintMCP)（MIT 许可证）修改扩展。  
+本项目基于 [lilklon/UEBlueprintMCP](https://github.com/lilklon/UEBlueprintMCP)（MIT 许可证）改进与扩展。  
 原始代码版权归 [@lilklon](https://github.com/lilklon) 所有。
