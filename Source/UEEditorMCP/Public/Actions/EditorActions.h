@@ -206,6 +206,22 @@ protected:
 	virtual bool RequiresSave() const override { return false; }
 };
 
+/**
+ * FSaveAssetAction
+ * Saves one asset package and reports dirty state before/after the save.
+ * Params: asset_path (string, required) - e.g. "/Game/Foo/BP_Bar" or "/Game/Foo/BP_Bar.BP_Bar"
+ */
+class UEEDITORMCP_API FSaveAssetAction : public FEditorAction
+{
+public:
+	virtual TSharedPtr<FJsonObject> ExecuteInternal(const TSharedPtr<FJsonObject>& Params, FMCPEditorContext& Context) override;
+
+protected:
+	virtual bool Validate(const TSharedPtr<FJsonObject>& Params, FMCPEditorContext& Context, FString& OutError) override;
+	virtual FString GetActionName() const override { return TEXT("save_asset"); }
+	virtual bool RequiresSave() const override { return false; }
+};
+
 
 /**
  * FListAssetsAction

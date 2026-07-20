@@ -1070,6 +1070,91 @@ TSharedPtr<FJsonObject> FSaveAllAction::ExecuteInternal(const TSharedPtr<FJsonOb
 }
 
 
+// ============================================================================
+// FSaveAssetAction
+// ============================================================================
+
+bool FSaveAssetAction::Validate(const TSharedPtr<FJsonObject>& Params, FMCPEditorContext& Context, FString& OutError)
+{
+	FString AssetPath;
+	return GetRequiredString(Params, TEXT("asset_path"), AssetPath, OutError);
+}
+
+TSharedPtr<FJsonObject> FSaveAssetAction::ExecuteInternal(const TSharedPtr<FJsonObject>& Params, FMCPEditorContext& Context)
+{
+	FString AssetPath, Error;
+	GetRequiredString(Params, TEXT("asset_path"), AssetPath, Error);
+
+	UObject* Asset = UEditorAssetLibrary::LoadAsset(AssetPath);
+	if (!Asset)
+	{
+		Asset = StaticLoadObject(UObject::StaticClass(), nullptr, *AssetPath);
+	}
+	if (!Asset && !AssetPath.Contains(TEXT(".")))
+	{
+		FString AssetName = FPackageName::GetLongPackageAssetName(AssetPath);
+		const FString ObjectPath = AssetPath + TEXT(".") + AssetName;
+		Asset = StaticLoadObject(UObject::StaticClass(), nullptr, *ObjectPath);
+	}
+	if (!Asset)
+	{
+		return CreateErrorResponse(
+			FString::Printf(TEXT("Failed to load asset: %s"), *AssetPath),
+			TEXT("asset_not_found"));
+	}
+
+	UPackage* Package = Asset->GetOutermost();
+	if (!Package)
+	{
+		return CreateErrorResponse(TEXT("Asset has no outer package"), TEXT("no_package"));
+	}
+
+	const FString PackageName = Package->GetName();
+	const bool bWasDirty = Package->IsDirty();
+	const bool bIsMap = Package->ContainsMap();
+	const FString Extension = bIsMap ? FPackageName::GetMapPackageExtension() : FPackageName::GetAssetPackageExtension();
+
+	FString PackageFilename;
+	if (!FPackageName::TryConvertLongPackageNameToFilename(PackageName, PackageFilename, Extension))
+	{
+		return CreateErrorResponse(
+			FString::Printf(TEXT("Could not convert package name to filename: %s"), *PackageName),
+			TEXT("invalid_package_name"));
+	}
+
+	FSavePackageArgs SaveArgs;
+	SaveArgs.TopLevelFlags = RF_Standalone;
+	UObject* AssetToSave = Package->FindAssetInPackage();
+	if (!AssetToSave)
+	{
+		AssetToSave = Asset;
+	}
+
+	const bool bSaved = UPackage::SavePackage(Package, AssetToSave, *PackageFilename, SaveArgs);
+	const bool bDirtyAfter = Package->IsDirty();
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetStringField(TEXT("asset_path"), Asset->GetPathName());
+	Result->SetStringField(TEXT("asset_name"), Asset->GetName());
+	Result->SetStringField(TEXT("asset_class"), Asset->GetClass() ? Asset->GetClass()->GetName() : TEXT("Unknown"));
+	Result->SetStringField(TEXT("package_name"), PackageName);
+	Result->SetStringField(TEXT("filename"), PackageFilename);
+	Result->SetBoolField(TEXT("was_dirty"), bWasDirty);
+	Result->SetBoolField(TEXT("saved"), bSaved);
+	Result->SetBoolField(TEXT("is_dirty_after"), bDirtyAfter);
+
+	if (!bSaved)
+	{
+		Result->SetBoolField(TEXT("success"), false);
+		Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Failed to save package: %s"), *PackageName));
+		Result->SetStringField(TEXT("error_type"), TEXT("save_failed"));
+		return Result;
+	}
+
+	return CreateSuccessResponse(Result);
+}
+
+
 // ========================================================================
 // FListAssetsAction
 // ========================================================================

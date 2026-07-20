@@ -88,6 +88,26 @@ _BLUEPRINT_ACTIONS = [
         examples=({"blueprint_name": "BP_Player", "property_name": "MaxHealth", "property_value": "100.0"},),
     ),
     ActionDef(
+        id="blueprint.get_default_properties",
+        command="get_blueprint_default_properties",
+        tags=("blueprint", "property", "default", "cdo", "read", "inspect"),
+        description="Read one or all properties from a Blueprint class default object",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "blueprint_name": {"type": "string", "description": "Name of the Blueprint"},
+                "property_name": {"type": "string", "description": "Optional property name to read"},
+                "editable_only": {"type": "boolean", "description": "Only include editable or Blueprint-visible properties"}
+            },
+            "required": ["blueprint_name"]
+        },
+        capabilities=("read",),
+        examples=(
+            {"blueprint_name": "BP_Player", "property_name": "MaxHealth"},
+            {"blueprint_name": "BP_Player", "editable_only": True},
+        ),
+    ),
+    ActionDef(
         id="blueprint.spawn_actor",
         command="spawn_blueprint_actor",
         tags=("blueprint", "spawn", "actor", "level"),
@@ -450,6 +470,23 @@ _EDITOR_ACTIONS = [
         tags=("editor", "save", "all"),
         description="Save all dirty packages (blueprints, levels, assets)",
         input_schema={"type": "object", "properties": {}},
+    ),
+    ActionDef(
+        id="editor.save_asset",
+        command="save_asset",
+        tags=("editor", "save", "asset", "package"),
+        description="Save one asset package and report dirty state before and after saving",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "asset_path": {
+                    "type": "string",
+                    "description": "Asset path, e.g. /Game/Foo/BP_Bar or /Game/Foo/BP_Bar.BP_Bar"
+                }
+            },
+            "required": ["asset_path"]
+        },
+        examples=({"asset_path": "/Game/Characters/BP_Hero.BP_Hero"},),
     ),
     ActionDef(
         id="editor.list_assets",

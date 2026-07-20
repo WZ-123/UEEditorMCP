@@ -552,14 +552,6 @@ def _handle_summarize_trace(args: dict[str, Any]) -> dict[str, Any]:
             "notes": ["Please pass a valid .utrace file path."],
         }
 
-    project_path = _resolve_project_path(args.get("projectPath"))
-    if not project_path:
-        return {
-            "success": False,
-            "error": "Could not resolve .uproject path",
-            "notes": ["Pass projectPath explicitly or set UPROJECT_PATH/PROJECT_ROOT/WORKSPACE_ROOT."],
-        }
-
     editor_cmd = _resolve_editor_cmd_path(args.get("editorCmdPath"), args.get("engineRoot"))
     if not editor_cmd:
         return {
@@ -571,10 +563,17 @@ def _handle_summarize_trace(args: dict[str, Any]) -> dict[str, Any]:
     timeout_seconds = _clamp_int(args.get("timeoutSeconds"), _DEFAULT_TIMEOUT_SECONDS, 10, 3600)
     include_telemetry = bool(args.get("includeTelemetry", True))
     skip_baseline = bool(args.get("skipBaseline", True))
+    use_project = bool(args.get("useProject", False))
+    project_path = _resolve_project_path(args.get("projectPath")) if use_project else None
+    if use_project and not project_path:
+        return {
+            "success": False,
+            "error": "Could not resolve .uproject path",
+            "notes": ["Pass projectPath explicitly or set UPROJECT_PATH/PROJECT_ROOT/WORKSPACE_ROOT."],
+        }
 
     command = [
         str(editor_cmd),
-        str(project_path),
         "-run=SummarizeTrace",
         f"-inputfile={trace_path}",
         "-unattended",
@@ -582,6 +581,8 @@ def _handle_summarize_trace(args: dict[str, Any]) -> dict[str, Any]:
         "-nosplash",
         "-nullrhi",
     ]
+    if project_path:
+        command.insert(1, str(project_path))
     if include_telemetry:
         command.append("-alltelemetry")
     if skip_baseline:
@@ -664,13 +665,17 @@ def _handle_summarize_trace(args: dict[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {
         "success": success,
         "tracePath": str(trace_path),
-        "projectPath": str(project_path),
         "editorCmdPath": str(editor_cmd),
+        "usedProject": bool(project_path),
         "exitCode": completed.returncode,
         "generatedCsvs": generated,
         "notes": notes,
         "outputTail": output,
     }
+    if project_path:
+        result["projectPath"] = str(project_path)
+    elif args.get("projectPath"):
+        notes.append("projectPath was provided but ignored because useProject is false.")
     if thread_scope_result:
         result["threadScopeExport"] = thread_scope_result
     return result
@@ -879,7 +884,8 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "tracePath": {"type": "string", "description": "Absolute path to the .utrace file."},
-                "projectPath": {"type": "string", "description": "Optional absolute path to the .uproject file. If omitted, the server will try to infer it."},
+                "projectPath": {"type": "string", "description": "Optional absolute path to the .uproject file. Used only when useProject is true."},
+                "useProject": {"type": "boolean", "description": "Pass the .uproject to UnrealEditor-Cmd before -run=SummarizeTrace (default false). Leave false for offline trace CSV export to avoid project startup stalls."},
                 "editorCmdPath": {"type": "string", "description": "Optional absolute path to UnrealEditor-Cmd.exe."},
                 "engineRoot": {"type": "string", "description": "Optional Unreal Engine root directory used to resolve UnrealEditor-Cmd.exe."},
                 "timeoutSeconds": {"type": "integer", "description": "Timeout for the commandlet process (default 300)."},

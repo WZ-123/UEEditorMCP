@@ -59,6 +59,19 @@ def get_tools() -> list[Tool]:
                 "required": ["blueprint_name", "property_name", "property_value"]
             }
         ),
+        Tool(
+            name="get_blueprint_default_properties",
+            description="Read properties from a Blueprint class default object. Provide property_name to read one value.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "blueprint_name": {"type": "string", "description": "Name of the Blueprint"},
+                    "property_name": {"type": "string", "description": "Optional property name to read"},
+                    "editable_only": {"type": "boolean", "description": "Only include editable or Blueprint-visible properties"}
+                },
+                "required": ["blueprint_name"]
+            }
+        ),
 
         # Components
         Tool(
@@ -202,6 +215,7 @@ TOOL_HANDLERS = {
     "create_blueprint": "create_blueprint",
     "compile_blueprint": "compile_blueprint",
     "set_blueprint_property": "set_blueprint_property",
+    "get_blueprint_default_properties": "get_blueprint_default_properties",
     "add_component_to_blueprint": "add_component_to_blueprint",
     "set_static_mesh_properties": "set_static_mesh_properties",
     "set_component_property": "set_component_property",

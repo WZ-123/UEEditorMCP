@@ -169,6 +169,20 @@ def get_tools() -> list[Tool]:
             description="Save all dirty packages (blueprints, levels, assets).",
             inputSchema={"type": "object", "properties": {}}
         ),
+        Tool(
+            name="save_asset",
+            description="Save one asset package and report dirty state before and after saving.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "asset_path": {
+                        "type": "string",
+                        "description": "Asset path, e.g. /Game/Foo/BP_Bar or /Game/Foo/BP_Bar.BP_Bar"
+                    }
+                },
+                "required": ["asset_path"]
+            }
+        ),
 
         # Asset discovery
         Tool(
@@ -307,6 +321,7 @@ TOOL_HANDLERS = {
     "get_viewport_transform": "get_viewport_transform",
     "set_viewport_transform": "set_viewport_transform",
     "save_all": "save_all",
+    "save_asset": "save_asset",
     "list_assets": "list_assets",
     "get_blueprint_summary": "get_blueprint_summary",
     "auto_layout_selected": "auto_layout_selected",

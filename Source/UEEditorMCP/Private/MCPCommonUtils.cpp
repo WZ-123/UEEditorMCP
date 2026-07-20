@@ -21,7 +21,6 @@
 #include "Kismet2/KismetEditorUtilities.h"
 #include "GameFramework/Actor.h"
 #include "EditorAssetLibrary.h"
-#include "Misc/App.h"
 
 // =========================================================================
 // JSON Parsing Utilities
@@ -245,11 +244,8 @@ static bool LoadClassFromPath(const FString& ClassPath, UClass*& OutClass, FStri
 	}
 	if (!OutClass && !ClassPath.StartsWith(TEXT("/")))
 	{
-		if (!FApp::GetProjectName().IsEmpty())
-		{
-			const FString ScriptPath = FString::Printf(TEXT("/Script/%s.%s"), FApp::GetProjectName(), *ClassPath);
-			OutClass = LoadObject<UClass>(nullptr, *ScriptPath);
-		}
+		const FString ScriptPath = FString::Printf(TEXT("/Script/td_digging.%s"), *ClassPath);
+		OutClass = LoadObject<UClass>(nullptr, *ScriptPath);
 	}
 	if (!OutClass)
 	{

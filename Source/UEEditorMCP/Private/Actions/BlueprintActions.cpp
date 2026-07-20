@@ -36,6 +36,90 @@
 #include "WidgetBlueprint.h"
 #include "Blueprint/WidgetTree.h"
 #include "UObject/SavePackage.h"
+#include "UObject/UnrealType.h"
+
+namespace
+{
+FString GetMCPPropertyTypeString(const FProperty* Property)
+{
+	if (!Property)
+	{
+		return TEXT("Unknown");
+	}
+
+	if (const FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property))
+	{
+		return FString::Printf(TEXT("Array<%s>"), *GetMCPPropertyTypeString(ArrayProperty->Inner));
+	}
+	if (const FMapProperty* MapProperty = CastField<FMapProperty>(Property))
+	{
+		return FString::Printf(TEXT("Map<%s,%s>"),
+			*GetMCPPropertyTypeString(MapProperty->KeyProp),
+			*GetMCPPropertyTypeString(MapProperty->ValueProp));
+	}
+	if (const FSetProperty* SetProperty = CastField<FSetProperty>(Property))
+	{
+		return FString::Printf(TEXT("Set<%s>"), *GetMCPPropertyTypeString(SetProperty->ElementProp));
+	}
+	if (const FStructProperty* StructProperty = CastField<FStructProperty>(Property))
+	{
+		return FString::Printf(TEXT("Struct(%s)"), *StructProperty->Struct->GetName());
+	}
+	if (const FEnumProperty* EnumProperty = CastField<FEnumProperty>(Property))
+	{
+		return FString::Printf(TEXT("Enum(%s)"), *EnumProperty->GetEnum()->GetName());
+	}
+	if (const FByteProperty* ByteProperty = CastField<FByteProperty>(Property))
+	{
+		return ByteProperty->Enum
+			? FString::Printf(TEXT("Enum(%s)"), *ByteProperty->Enum->GetName())
+			: TEXT("Byte");
+	}
+	if (CastField<FBoolProperty>(Property)) return TEXT("Boolean");
+	if (CastField<FIntProperty>(Property)) return TEXT("Int32");
+	if (CastField<FInt64Property>(Property)) return TEXT("Int64");
+	if (CastField<FFloatProperty>(Property)) return TEXT("Float");
+	if (CastField<FDoubleProperty>(Property)) return TEXT("Double");
+	if (CastField<FStrProperty>(Property)) return TEXT("String");
+	if (CastField<FNameProperty>(Property)) return TEXT("Name");
+	if (CastField<FTextProperty>(Property)) return TEXT("Text");
+	if (CastField<FObjectProperty>(Property)) return TEXT("Object");
+	if (CastField<FClassProperty>(Property)) return TEXT("Class");
+
+	return Property->GetCPPType();
+}
+
+bool ShouldIncludeMCPProperty(const FProperty* Property, bool bEditableOnly)
+{
+	if (!Property)
+	{
+		return false;
+	}
+
+	if (!bEditableOnly)
+	{
+		return true;
+	}
+
+	return Property->HasAnyPropertyFlags(CPF_Edit | CPF_BlueprintVisible);
+}
+
+TSharedPtr<FJsonObject> BlueprintDefaultPropertyToJson(const FProperty* Property, const UObject* DefaultObject)
+{
+	TSharedPtr<FJsonObject> PropertyObj = MakeShared<FJsonObject>();
+	PropertyObj->SetStringField(TEXT("name"), Property->GetName());
+	PropertyObj->SetStringField(TEXT("type"), GetMCPPropertyTypeString(Property));
+	PropertyObj->SetBoolField(TEXT("editable"), Property->HasAnyPropertyFlags(CPF_Edit));
+	PropertyObj->SetBoolField(TEXT("blueprint_visible"), Property->HasAnyPropertyFlags(CPF_BlueprintVisible));
+
+	FString ExportedValue;
+	const void* ValuePtr = Property->ContainerPtrToValuePtr<void>(DefaultObject);
+	Property->ExportTextItem_Direct(ExportedValue, ValuePtr, nullptr, const_cast<UObject*>(DefaultObject), PPF_None);
+	PropertyObj->SetStringField(TEXT("value"), ExportedValue);
+
+	return PropertyObj;
+}
+}
 
 // ============================================================================
 // FCreateBlueprintAction
@@ -1033,6 +1117,83 @@ TSharedPtr<FJsonObject> FSetBlueprintPropertyAction::ExecuteInternal(const TShar
 	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 	Result->SetStringField(TEXT("property"), PropertyName);
 	Result->SetBoolField(TEXT("success"), true);
+	return CreateSuccessResponse(Result);
+}
+
+
+// ============================================================================
+// FGetBlueprintDefaultPropertiesAction
+// ============================================================================
+
+bool FGetBlueprintDefaultPropertiesAction::Validate(const TSharedPtr<FJsonObject>& Params, FMCPEditorContext& Context, FString& OutError)
+{
+	return ValidateBlueprint(Params, Context, OutError);
+}
+
+TSharedPtr<FJsonObject> FGetBlueprintDefaultPropertiesAction::ExecuteInternal(const TSharedPtr<FJsonObject>& Params, FMCPEditorContext& Context)
+{
+	UBlueprint* Blueprint = GetTargetBlueprint(Params, Context);
+	if (!Blueprint)
+	{
+		return CreateErrorResponse(TEXT("Blueprint not found"), TEXT("not_found"));
+	}
+
+	if (!Blueprint->GeneratedClass)
+	{
+		return CreateErrorResponse(TEXT("Blueprint has no generated class - compile it first"), TEXT("not_compiled"));
+	}
+
+	UObject* DefaultObject = Blueprint->GeneratedClass->GetDefaultObject();
+	if (!DefaultObject)
+	{
+		return CreateErrorResponse(TEXT("Failed to get default object"), TEXT("no_default_object"));
+	}
+
+	const bool bEditableOnly = GetOptionalBool(Params, TEXT("editable_only"), false);
+	FString PropertyName;
+	const bool bSingleProperty = Params->TryGetStringField(TEXT("property_name"), PropertyName) && !PropertyName.IsEmpty();
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetStringField(TEXT("blueprint_name"), Blueprint->GetName());
+	Result->SetStringField(TEXT("asset_path"), Blueprint->GetPathName());
+	Result->SetStringField(TEXT("generated_class"), Blueprint->GeneratedClass->GetPathName());
+	Result->SetStringField(TEXT("default_object"), DefaultObject->GetPathName());
+	Result->SetBoolField(TEXT("editable_only"), bEditableOnly);
+
+	if (bSingleProperty)
+	{
+		FProperty* Property = FindFProperty<FProperty>(DefaultObject->GetClass(), *PropertyName);
+		if (!Property)
+		{
+			return CreateErrorResponse(
+				FString::Printf(TEXT("Property not found on Blueprint CDO: %s"), *PropertyName),
+				TEXT("property_not_found"));
+		}
+		if (!ShouldIncludeMCPProperty(Property, bEditableOnly))
+		{
+			return CreateErrorResponse(
+				FString::Printf(TEXT("Property is not editable or Blueprint-visible: %s"), *PropertyName),
+				TEXT("property_filtered"));
+		}
+
+		Result->SetObjectField(TEXT("property"), BlueprintDefaultPropertyToJson(Property, DefaultObject));
+		return CreateSuccessResponse(Result);
+	}
+
+	TArray<TSharedPtr<FJsonValue>> PropertiesArray;
+	for (TFieldIterator<FProperty> It(DefaultObject->GetClass(), EFieldIteratorFlags::IncludeSuper); It; ++It)
+	{
+		FProperty* Property = *It;
+		if (!ShouldIncludeMCPProperty(Property, bEditableOnly))
+		{
+			continue;
+		}
+
+		PropertiesArray.Add(MakeShared<FJsonValueObject>(BlueprintDefaultPropertyToJson(Property, DefaultObject)));
+	}
+
+	Result->SetNumberField(TEXT("count"), PropertiesArray.Num());
+	Result->SetArrayField(TEXT("properties"), PropertiesArray);
 	return CreateSuccessResponse(Result);
 }
 

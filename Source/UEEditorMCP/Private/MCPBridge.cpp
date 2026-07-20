@@ -91,6 +91,7 @@ void UMCPBridge::RegisterActions()
 	ActionHandlers.Add(TEXT("set_static_mesh_properties"), MakeShared<FSetStaticMeshPropertiesAction>());
 	ActionHandlers.Add(TEXT("set_physics_properties"), MakeShared<FSetPhysicsPropertiesAction>());
 	ActionHandlers.Add(TEXT("set_blueprint_property"), MakeShared<FSetBlueprintPropertyAction>());
+	ActionHandlers.Add(TEXT("get_blueprint_default_properties"), MakeShared<FGetBlueprintDefaultPropertiesAction>());
 	ActionHandlers.Add(TEXT("create_colored_material"), MakeShared<FCreateColoredMaterialAction>());
 	ActionHandlers.Add(TEXT("set_blueprint_parent_class"), MakeShared<FSetBlueprintParentClassAction>());
 	ActionHandlers.Add(TEXT("add_blueprint_interface"), MakeShared<FAddBlueprintInterfaceAction>());
@@ -110,6 +111,7 @@ void UMCPBridge::RegisterActions()
 	ActionHandlers.Add(TEXT("get_viewport_transform"), MakeShared<FGetViewportTransformAction>());
 	ActionHandlers.Add(TEXT("set_viewport_transform"), MakeShared<FSetViewportTransformAction>());
 	ActionHandlers.Add(TEXT("save_all"), MakeShared<FSaveAllAction>());
+	ActionHandlers.Add(TEXT("save_asset"), MakeShared<FSaveAssetAction>());
 	ActionHandlers.Add(TEXT("list_assets"), MakeShared<FListAssetsAction>());
 	ActionHandlers.Add(TEXT("rename_assets"), MakeShared<FRenameAssetsAction>());
 	ActionHandlers.Add(TEXT("get_selected_asset_thumbnail"), MakeShared<FGetSelectedAssetThumbnailAction>());

@@ -256,6 +256,31 @@ protected:
 	virtual FString GetActionName() const override { return TEXT("set_blueprint_property"); }
 };
 
+/**
+ * FGetBlueprintDefaultPropertiesAction
+ *
+ * Reads properties from a Blueprint's class default object.
+ *
+ * Parameters:
+ *   - blueprint_name (required): Name of the Blueprint
+ *   - property_name (optional): Return a single property if provided
+ *   - editable_only (optional): Only include Edit/BlueprintVisible properties
+ *
+ * Returns:
+ *   - default object metadata
+ *   - property or properties with type and exported value
+ */
+class UEEDITORMCP_API FGetBlueprintDefaultPropertiesAction : public FBlueprintAction
+{
+public:
+	virtual TSharedPtr<FJsonObject> ExecuteInternal(const TSharedPtr<FJsonObject>& Params, FMCPEditorContext& Context) override;
+
+protected:
+	virtual bool Validate(const TSharedPtr<FJsonObject>& Params, FMCPEditorContext& Context, FString& OutError) override;
+	virtual FString GetActionName() const override { return TEXT("get_blueprint_default_properties"); }
+	virtual bool RequiresSave() const override { return false; }
+};
+
 
 /**
  * FCreateColoredMaterialAction
